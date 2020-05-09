@@ -27,34 +27,40 @@ defmodule OpentelemetryPlug do
     # register the tracer. just re-registers if called for multiple repos
     _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
 
+    :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_phoenix_tracer_router_start}},
+      [:phoenix, :router_dispatch, :start],
+      &__MODULE__.handle_route/4,
+      config)
+
+    :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_router_start}},
+      [:plug, :router_dispatch, :start],
+      &__MODULE__.handle_route/4,
+      config)
+
     :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_start}},
-      event_prefix ++ [:start],
+      [:plug_adapter, :call, :start],
       &__MODULE__.handle_start/4,
       config)
 
     :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_stop}},
-      event_prefix ++ [:stop],
+      [:plug_adapter, :call, :stop],
       &__MODULE__.handle_stop/4,
       config)
 
     :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_exception}},
-      event_prefix ++ [:exception],
+      [:plug_adapter, :call, :exception],
       &__MODULE__.handle_exception/4,
       config)
   end
 
   @doc false
   def handle_start(_, _measurements, %{conn: conn}, _config) do
+    # TODO: add config for what paths are traced
+
     # setup OpenTelemetry context based on request headers
     :ot_propagation.http_extract(conn.req_headers)
 
-    # TODO: add config option to allow `conn.request_path` as span name
-    span_name = case Map.get(conn.private, :plug_route) do
-                  nil ->
-                    "HTTP " <> conn.method
-                  {route, _fun} ->
-                    route
-                end
+    span_name = "HTTP " <> conn.method
 
     {_, adapter} = conn.adapter
     user_agent = header_or_empty(conn, "User-Agent")
@@ -77,6 +83,12 @@ defmodule OpentelemetryPlug do
     # TODO: Plug should provide a monotonic native time in measurements to use here
     # for the `start_time` option
     OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes})
+  end
+
+  @doc false
+  def handle_route(_, _measurements, %{route: route}, _config) do
+    # TODO: add config option to allow `conn.request_path` as span name
+    OpenTelemetry.Span.update_name(route)
   end
 
   @doc false

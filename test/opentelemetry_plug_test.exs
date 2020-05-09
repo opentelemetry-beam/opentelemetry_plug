@@ -39,7 +39,6 @@ defmodule MyRouter do
   use Plug.Router
 
   plug :match
-  plug Plug.Telemetry, event_prefix: [:my, :plug]
   plug :dispatch
 
   forward "/hello/:foo", to: MyPlug
