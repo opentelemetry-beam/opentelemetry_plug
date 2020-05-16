@@ -12,7 +12,7 @@ defmodule OpentelemetryPlug do
 
   Example:
 
-      OpentelemetryPlug.setup([:my, :plug])
+      OpentelemetryPlug.setup([])
 
   You may also supply the following options in the second argument:
 
@@ -23,7 +23,7 @@ defmodule OpentelemetryPlug do
       defaults to the concatenation of the event name with periods, e.g.
       `"my.plug.start"`.
   """
-  def setup(event_prefix, config \\ []) do
+  def setup(config \\ []) do
     # register the tracer. just re-registers if called for multiple repos
     _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
 
