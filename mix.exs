@@ -21,7 +21,7 @@ defmodule OpentelemetryPlug.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:plug, github: "elixir-plug/plug", branch: "master"},
+      {:plug, "~> 1.10.1"},
       {:opentelemetry_api, "~> 0.3"},
       {:opentelemetry, "~> 0.3"},
       {:telemetry, "~> 0.4"}
