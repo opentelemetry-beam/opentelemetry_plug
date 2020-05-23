@@ -27,27 +27,31 @@ defmodule OpentelemetryPlug do
     # register the tracer. just re-registers if called for multiple repos
     _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
 
-    :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_phoenix_tracer_router_start}},
+    :telemetry.attach({__MODULE__, :phoenix_tracer_router_start},
       [:phoenix, :router_dispatch, :start],
       &__MODULE__.handle_route/4,
       config)
 
-    :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_router_start}},
+    :telemetry.attach(
+      {__MODULE__, :plug_tracer_router_start},
       [:plug, :router_dispatch, :start],
       &__MODULE__.handle_route/4,
       config)
 
-    :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_start}},
+    :telemetry.attach(
+      {__MODULE__, :plug_tracer_start},
       [:plug_adapter, :call, :start],
       &__MODULE__.handle_start/4,
       config)
 
-    :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_stop}},
+    :telemetry.attach(
+      {__MODULE__, :plug_tracer_stop},
       [:plug_adapter, :call, :stop],
       &__MODULE__.handle_stop/4,
       config)
 
-    :telemetry.attach({__MODULE__, {event_prefix, :opentelemetry_plug_tracer_exception}},
+    :telemetry.attach(
+      {__MODULE__, :plug_tracer_exception},
       [:plug_adapter, :call, :exception],
       &__MODULE__.handle_exception/4,
       config)
