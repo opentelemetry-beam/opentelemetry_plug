@@ -27,6 +27,7 @@ defmodule MyPlug do
         conn
         |> put_resp_content_type("text/plain")
         |> send_resp(400, "no span context")
+
       _ ->
         conn
         |> put_resp_content_type("text/plain")

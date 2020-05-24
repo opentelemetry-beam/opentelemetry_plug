@@ -27,34 +27,40 @@ defmodule OpentelemetryPlug do
     # register the tracer. just re-registers if called for multiple repos
     _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
 
-    :telemetry.attach({__MODULE__, :phoenix_tracer_router_start},
+    :telemetry.attach(
+      {__MODULE__, :phoenix_tracer_router_start},
       [:phoenix, :router_dispatch, :start],
       &__MODULE__.handle_route/4,
-      config)
+      config
+    )
 
     :telemetry.attach(
       {__MODULE__, :plug_tracer_router_start},
       [:plug, :router_dispatch, :start],
       &__MODULE__.handle_route/4,
-      config)
+      config
+    )
 
     :telemetry.attach(
       {__MODULE__, :plug_tracer_start},
       [:plug_adapter, :call, :start],
       &__MODULE__.handle_start/4,
-      config)
+      config
+    )
 
     :telemetry.attach(
       {__MODULE__, :plug_tracer_stop},
       [:plug_adapter, :call, :stop],
       &__MODULE__.handle_stop/4,
-      config)
+      config
+    )
 
     :telemetry.attach(
       {__MODULE__, :plug_tracer_exception},
       [:plug_adapter, :call, :exception],
       &__MODULE__.handle_exception/4,
-      config)
+      config
+    )
   end
 
   @doc false
@@ -71,19 +77,21 @@ defmodule OpentelemetryPlug do
     host = header_or_empty(conn, "Host")
     peer_ip = Map.get(Map.get(adapter, :peer_data), :address)
 
-    attributes = [{"http.target", conn.request_path},
-                  {"http.host",  conn.host},
-                  {"http.scheme",  conn.scheme},
-                  {"http.user_agent", user_agent},
-                  {"http.method", conn.method},
-                  {"net.peer.ip", to_string(:inet_parse.ntoa(peer_ip))},
-                  {"net.peer.port", adapter.peer_data.port},
-                  {"net.peer.name", host},
-                  {"net.transport", "IP.TCP"},
-                  {"net.host.ip", to_string(:inet_parse.ntoa(conn.remote_ip))},
-                  {"net.host.port", conn.port} | optional_attributes(conn)
-                  # {"net.host.name", HostName}
-                 ]
+    attributes = [
+      {"http.target", conn.request_path},
+      {"http.host", conn.host},
+      {"http.scheme", conn.scheme},
+      {"http.user_agent", user_agent},
+      {"http.method", conn.method},
+      {"net.peer.ip", to_string(:inet_parse.ntoa(peer_ip))},
+      {"net.peer.port", adapter.peer_data.port},
+      {"net.peer.name", host},
+      {"net.transport", "IP.TCP"},
+      {"net.host.ip", to_string(:inet_parse.ntoa(conn.remote_ip))},
+      {"net.host.port", conn.port} | optional_attributes(conn)
+      # {"net.host.name", HostName}
+    ]
+
     # TODO: Plug should provide a monotonic native time in measurements to use here
     # for the `start_time` option
     OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes})
@@ -111,6 +119,7 @@ defmodule OpentelemetryPlug do
     case Plug.Conn.get_req_header(conn, header) do
       [] ->
         ""
+
       [host | _] ->
         host
     end
@@ -119,21 +128,25 @@ defmodule OpentelemetryPlug do
   defp optional_attributes(conn) do
     # for some reason Elixir removed Enum.filter_map in 1.5
     # so just using Erlang's list module
-    :lists.filtermap(fn({attr, fun}) ->
-      case fun.(conn) do
-        nil ->
-          false;
-        value ->
-          {true, {attr, value}}
-      end
-    end, [{"http.client_ip", &client_ip/1},
-          {"http.server_name", &server_name/1}])
+    :lists.filtermap(
+      fn {attr, fun} ->
+        case fun.(conn) do
+          nil ->
+            false
+
+          value ->
+            {true, {attr, value}}
+        end
+      end,
+      [{"http.client_ip", &client_ip/1}, {"http.server_name", &server_name/1}]
+    )
   end
 
   defp client_ip(conn) do
     case Plug.Conn.get_req_header(conn, "X-Forwarded-For") do
       [] ->
         nil
+
       [host | _] ->
         host
     end
