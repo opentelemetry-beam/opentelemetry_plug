@@ -100,20 +100,28 @@ defmodule OpentelemetryPlug do
   @doc false
   def handle_route(_, _measurements, %{route: route}, _config) do
     # TODO: add config option to allow `conn.request_path` as span name
-    OpenTelemetry.Span.update_name(route)
+    if in_span?() do
+      OpenTelemetry.Span.update_name(route)
+    end
   end
 
   @doc false
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
-    OpenTelemetry.Span.set_attribute("http.status", conn.status)
-    OpenTelemetry.Tracer.end_span()
+    if in_span?() do
+      OpenTelemetry.Span.set_attribute("http.status", conn.status)
+      OpenTelemetry.Tracer.end_span()
+    end
   end
 
   @doc false
   def handle_exception(_, _measurements, %{conn: _conn}, _config) do
-    OpenTelemetry.Span.set_status(OpenTelemetry.status('UnknownError', "unknown error"))
-    OpenTelemetry.Tracer.end_span()
+    if in_span?() do
+      OpenTelemetry.Span.set_status(OpenTelemetry.status('UnknownError', "unknown error"))
+      OpenTelemetry.Tracer.end_span()
+    end
   end
+
+  defp in_span?, do: OpenTelemetry.Tracer.current_ctx() != :undefined
 
   defp header_or_empty(conn, header) do
     case Plug.Conn.get_req_header(conn, header) do
