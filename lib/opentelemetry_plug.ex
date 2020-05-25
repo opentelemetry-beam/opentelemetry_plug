@@ -72,10 +72,11 @@ defmodule OpentelemetryPlug do
 
     span_name = "HTTP " <> conn.method
 
-    {_, adapter} = conn.adapter
+    peer_data = Plug.Conn.get_peer_data(conn)
+
     user_agent = header_or_empty(conn, "User-Agent")
     host = header_or_empty(conn, "Host")
-    peer_ip = Map.get(Map.get(adapter, :peer_data), :address)
+    peer_ip = Map.get(peer_data, :address)
 
     attributes = [
       {"http.target", conn.request_path},
@@ -84,7 +85,7 @@ defmodule OpentelemetryPlug do
       {"http.user_agent", user_agent},
       {"http.method", conn.method},
       {"net.peer.ip", to_string(:inet_parse.ntoa(peer_ip))},
-      {"net.peer.port", adapter.peer_data.port},
+      {"net.peer.port", peer_data.port},
       {"net.peer.name", host},
       {"net.transport", "IP.TCP"},
       {"net.host.ip", to_string(:inet_parse.ntoa(conn.remote_ip))},
