@@ -4,10 +4,10 @@ defmodule OpentelemetryPlugTest do
   setup_all do
     OpentelemetryPlug.setup([])
 
-    {:ok, _} = Plug.Cowboy.http(MyPlug, [], ip: {127, 0, 0, 1}, port: 0)
+    {:ok, _} = Plug.Cowboy.http(MyRouter, [], ip: {127, 0, 0, 1}, port: 0)
 
     on_exit(fn ->
-      :ok = Plug.Cowboy.shutdown(MyPlug.HTTP)
+      :ok = Plug.Cowboy.shutdown(MyRouter.HTTP)
     end)
   end
 
@@ -16,7 +16,7 @@ defmodule OpentelemetryPlugTest do
   end
 
   defp base_url do
-    info = :ranch.info(MyPlug.HTTP)
+    info = :ranch.info(MyRouter.HTTP)
     port = Keyword.fetch!(info, :port)
     ip = Keyword.fetch!(info, :ip)
     "http://#{:inet.ntoa(ip)}:#{port}"
@@ -67,6 +67,7 @@ defmodule MyRouter do
   use Plug.Router
 
   plug :match
+  plug Plug.Telemetry, event_prefix: [:plug_adapter, :call]
   plug :dispatch
 
   forward "/hello/:foo", to: MyPlug

@@ -15,6 +15,11 @@ def deps do
 end
 ```
 
+OpentelemetryPlug requires following Plug.Telemetry configuration:
+```elixir
+plug Plug.Telemetry, event_prefix: [:plug_adapter, :call]
+```
+
 Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at [https://hexdocs.pm/opentelemetry_plug](https://hexdocs.pm/opentelemetry_plug).

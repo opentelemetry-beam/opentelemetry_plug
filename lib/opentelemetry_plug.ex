@@ -68,7 +68,7 @@ defmodule OpentelemetryPlug do
     # TODO: add config for what paths are traced
 
     # setup OpenTelemetry context based on request headers
-    :ot_propagation.http_extract(conn.req_headers)
+    :otel_propagator.text_map_extract(conn.req_headers)
 
     span_name = "HTTP " <> conn.method
 
@@ -95,21 +95,24 @@ defmodule OpentelemetryPlug do
 
     # TODO: Plug should provide a monotonic native time in measurements to use here
     # for the `start_time` option
-    OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes})
+    span = OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes})
+    OpenTelemetry.Tracer.set_current_span(span)
   end
 
   @doc false
   def handle_route(_, _measurements, %{route: route}, _config) do
     # TODO: add config option to allow `conn.request_path` as span name
     if in_span?() do
-      OpenTelemetry.Span.update_name(route)
+      ctx = OpenTelemetry.Ctx.get_current()
+      OpenTelemetry.Span.update_name(ctx, route)
     end
   end
 
   @doc false
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
     if in_span?() do
-      OpenTelemetry.Span.set_attribute("http.status", conn.status)
+      ctx = OpenTelemetry.Ctx.get_current()
+      OpenTelemetry.Span.set_attribute(ctx, "http.status", conn.status)
       OpenTelemetry.Tracer.end_span()
     end
   end
@@ -117,12 +120,13 @@ defmodule OpentelemetryPlug do
   @doc false
   def handle_exception(_, _measurements, %{conn: _conn}, _config) do
     if in_span?() do
-      OpenTelemetry.Span.set_status(OpenTelemetry.status('UnknownError', "unknown error"))
+      ctx = OpenTelemetry.Ctx.get_current()
+      OpenTelemetry.Span.set_status(ctx, OpenTelemetry.status('UnknownError', "unknown error"))
       OpenTelemetry.Tracer.end_span()
     end
   end
 
-  defp in_span?, do: OpenTelemetry.Tracer.current_ctx() != :undefined
+  defp in_span?, do: OpenTelemetry.Tracer.current_span_ctx() != :undefined
 
   defp header_or_empty(conn, header) do
     case Plug.Conn.get_req_header(conn, header) do
