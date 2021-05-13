@@ -2,21 +2,27 @@ defmodule OpentelemetryPlugTest do
   use ExUnit.Case
 
   setup_all do
-    OpentelemetryPlug.setup([])
+    OpentelemetryPlug.setup()
 
-    {:ok, _} = Plug.Cowboy.http(MyPlug, [], ip: {127, 0, 0, 1}, port: 0)
+    {:ok, _} = Plug.Cowboy.http(MyRouter, [], ip: {127, 0, 0, 1}, port: 0)
 
     on_exit(fn ->
-      :ok = Plug.Cowboy.shutdown(MyPlug.HTTP)
+      :ok = Plug.Cowboy.shutdown(MyRouter.HTTP)
     end)
   end
 
-  test "creates span" do
-    assert {200, _, "Hello world"} = request(:get, "/hello/world")
+  setup do
+    :otel_batch_processor.set_exporter(:otel_exporter_pid, self())
+  end
+
+  test "creates span and adds propagation headers" do
+    assert {200, headers, "Hello world"} = request(:get, "/hello/world")
+    assert {"traceparent", _} = List.keyfind(headers, "traceparent", 0)
+    assert_receive {:span, _}, 5000
   end
 
   defp base_url do
-    info = :ranch.info(MyPlug.HTTP)
+    info = :ranch.info(MyRouter.HTTP)
     port = Keyword.fetch!(info, :port)
     ip = Keyword.fetch!(info, :ip)
     "http://#{:inet.ntoa(ip)}:#{port}"
@@ -40,15 +46,14 @@ defmodule OpentelemetryPlugTest do
   end
 end
 
-defmodule MyPlug do
-  import Plug.Conn
-  require OpenTelemetry.Tracer
+defmodule MyRouter do
+  use Plug.Router
 
-  def init(options) do
-    options
-  end
+  plug :match
+  plug OpentelemetryPlug.Propagation
+  plug :dispatch
 
-  def call(conn, _opts) do
+  match "/hello/:foo" do
     case OpenTelemetry.Tracer.current_span_ctx() do
       :undefined ->
         conn
@@ -61,13 +66,4 @@ defmodule MyPlug do
         |> send_resp(200, "Hello world")
     end
   end
-end
-
-defmodule MyRouter do
-  use Plug.Router
-
-  plug :match
-  plug :dispatch
-
-  forward "/hello/:foo", to: MyPlug
 end

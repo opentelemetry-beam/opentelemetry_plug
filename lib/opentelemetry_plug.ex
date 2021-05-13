@@ -6,71 +6,81 @@ defmodule OpentelemetryPlug do
   require OpenTelemetry.Tracer
   require OpenTelemetry.Span
 
+  defmodule Propagation do
+    @moduledoc """
+    Adds OpenTelemetry context propagation headers to the Plug response
+    """
+
+    @behaviour Plug
+    import Plug.Conn, only: [register_before_send: 2, merge_resp_headers: 2]
+
+    @impl true
+    def init(opts) do
+      opts
+    end
+
+    @impl true
+    def call(conn, opts) do
+      register_before_send(conn, &merge_resp_headers(&1, :otel_propagator.text_map_inject([])))
+    end
+  end
+
   @doc """
   Attaches the OpentelemetryPlug handler to your Plug prefix events. This
   should be called from your application behaviour on startup.
 
   Example:
 
-      OpentelemetryPlug.setup([])
+      OpentelemetryPlug.setup()
 
-  You may also supply the following options in the second argument:
+  You may also supply the following options as an optional argument:
 
-    * `:time_unit` - a time unit used to convert the values of query phase
-      timings, defaults to `:microsecond`. See `System.convert_time_unit/3`
-
-    * `:span_prefix` - the first part of the span name, as a `String.t`,
-      defaults to the concatenation of the event name with periods, e.g.
-      `"my.plug.start"`.
+    * `:event_prefix` - the
   """
   def setup(config \\ []) do
     # register the tracer. just re-registers if called for multiple repos
     _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
 
-    :telemetry.attach(
-      {__MODULE__, :phoenix_tracer_router_start},
-      [:phoenix, :router_dispatch, :start],
-      &__MODULE__.handle_route/4,
-      config
-    )
+    # :telemetry.attach_many(
+    #   {__MODULE__, :debug},
+    #   [
+    #     [:plug, :router_dispatch, :start],
+    #     [:plug, :router_dispatch, :stop],
+    #     [:plug, :router_dispatch, :exception]
+    #   ],
+    #   &IO.inspect({&1, &2, &3, &4}, label: Enum.join(&1, ".")),
+    #   %{}
+    # )
 
     :telemetry.attach(
-      {__MODULE__, :plug_tracer_router_start},
+      {__MODULE__, :plug_router_start},
       [:plug, :router_dispatch, :start],
-      &__MODULE__.handle_route/4,
-      config
-    )
-
-    :telemetry.attach(
-      {__MODULE__, :plug_tracer_start},
-      [:plug_adapter, :call, :start],
       &__MODULE__.handle_start/4,
       config
     )
 
     :telemetry.attach(
-      {__MODULE__, :plug_tracer_stop},
-      [:plug_adapter, :call, :stop],
+      {__MODULE__, :plug_router_stop},
+      [:plug, :router_dispatch, :stop],
       &__MODULE__.handle_stop/4,
       config
     )
 
     :telemetry.attach(
-      {__MODULE__, :plug_tracer_exception},
-      [:plug_adapter, :call, :exception],
+      {__MODULE__, :plug_router_exception},
+      [:plug, :router_dispatch, :exception],
       &__MODULE__.handle_exception/4,
       config
     )
   end
 
   @doc false
-  def handle_start(_, _measurements, %{conn: conn}, _config) do
+  def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
     # TODO: add config for what paths are traced
-
     # setup OpenTelemetry context based on request headers
-    :ot_propagation.http_extract(conn.req_headers)
+    :otel_propagator.text_map_extract(conn.req_headers)
 
-    span_name = "HTTP " <> conn.method
+    span_name = "#{conn.method} #{route}"
 
     peer_data = Plug.Conn.get_peer_data(conn)
 
@@ -82,6 +92,7 @@ defmodule OpentelemetryPlug do
       {"http.target", conn.request_path},
       {"http.host", conn.host},
       {"http.scheme", conn.scheme},
+      {"http.flavor", http_flavor(conn.adapter)},
       {"http.user_agent", user_agent},
       {"http.method", conn.method},
       {"net.peer.ip", to_string(:inet_parse.ntoa(peer_ip))},
@@ -95,34 +106,39 @@ defmodule OpentelemetryPlug do
 
     # TODO: Plug should provide a monotonic native time in measurements to use here
     # for the `start_time` option
-    OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes})
-  end
+    span_ctx =
+      OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes, kind: :server})
 
-  @doc false
-  def handle_route(_, _measurements, %{route: route}, _config) do
-    # TODO: add config option to allow `conn.request_path` as span name
-    if in_span?() do
-      OpenTelemetry.Span.update_name(route)
-    end
+    OpenTelemetry.Tracer.set_current_span(span_ctx)
   end
 
   @doc false
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
     if in_span?() do
-      OpenTelemetry.Span.set_attribute("http.status", conn.status)
+      OpenTelemetry.Tracer.set_attribute("http.status", conn.status)
       OpenTelemetry.Tracer.end_span()
     end
   end
 
   @doc false
-  def handle_exception(_, _measurements, %{conn: _conn}, _config) do
+  def handle_exception(
+        _,
+        _measurements,
+        %{kind: _kind, reason: reason, stacktrace: stacktrace},
+        _config
+      ) do
     if in_span?() do
-      OpenTelemetry.Span.set_status(OpenTelemetry.status('UnknownError', "unknown error"))
+      OpenTelemetry.Span.record_exception(
+        OpenTelemetry.Tracer.current_span_ctx(),
+        reason,
+        stacktrace
+      )
+
       OpenTelemetry.Tracer.end_span()
     end
   end
 
-  defp in_span?, do: OpenTelemetry.Tracer.current_ctx() != :undefined
+  defp in_span?, do: OpenTelemetry.Tracer.current_span_ctx() != :undefined
 
   defp header_or_empty(conn, header) do
     case Plug.Conn.get_req_header(conn, header) do
@@ -163,5 +179,16 @@ defmodule OpentelemetryPlug do
 
   defp server_name(_) do
     Application.get_env(OpentelemetryPlug, :server_name, nil)
+  end
+
+  defp http_flavor({_adapter_name, meta}) do
+    case Map.get(meta, :version) do
+      :"HTTP/1.0" -> :"1.0"
+      :"HTTP/1.1" -> :"1.1"
+      :"HTTP/2.0" -> :"2.0"
+      :SPDY -> :SPDY
+      :QUIC -> :QUIC
+      nil -> ""
+    end
   end
 end
