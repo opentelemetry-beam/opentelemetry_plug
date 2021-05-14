@@ -93,6 +93,7 @@ defmodule OpentelemetryPlug do
       {"http.host", conn.host},
       {"http.scheme", conn.scheme},
       {"http.flavor", http_flavor(conn.adapter)},
+      {"http.route", route},
       {"http.user_agent", user_agent},
       {"http.method", conn.method},
       {"net.peer.ip", to_string(:inet_parse.ntoa(peer_ip))},

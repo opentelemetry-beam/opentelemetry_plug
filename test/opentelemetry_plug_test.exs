@@ -25,6 +25,7 @@ defmodule OpentelemetryPlugTest do
   @default_attrs ~w(
     http.flavor
     http.method
+    http.route
     http.scheme
     http.status_code
     http.target
