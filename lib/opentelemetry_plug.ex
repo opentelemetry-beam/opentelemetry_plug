@@ -102,6 +102,15 @@ defmodule OpentelemetryPlug do
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
     if in_span?() do
       Tracer.set_attribute("http.status_code", conn.status)
+      # For HTTP status codes in the 4xx and 5xx ranges, as well as any other
+      # code the client failed to interpret, status MUST be set to Error.
+      #
+      # Don't set the span status description if the reason can be inferred from
+      # http.status_code.
+      if conn.status >= 400 do
+        Tracer.set_status(OpenTelemetry.status(:error, ""))
+      end
+
       Tracer.end_span()
       restore_parent_ctx()
     end

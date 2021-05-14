@@ -77,6 +77,13 @@ defmodule OpentelemetryPlugTest do
     end
   end
 
+  test "sets span status on non-successful status codes" do
+    assert {400, _, _} = request(:get, "/hello/bad-request")
+    assert_receive {:span, span(attributes: attrs, status: span_status)}, 5000
+    assert {"http.status_code", 400} = List.keyfind(attrs, "http.status_code", 0)
+    assert status(code: :error, message: _) = span_status
+  end
+
   defp base_url do
     info = :ranch.info(MyRouter.HTTP)
     port = Keyword.fetch!(info, :port)
@@ -112,6 +119,12 @@ defmodule MyRouter do
   match "/hello/crash" do
     _ = conn
     raise ArgumentError
+  end
+
+  match "/hello/bad-request" do
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(400, "bad request")
   end
 
   match "/hello/:foo" do
