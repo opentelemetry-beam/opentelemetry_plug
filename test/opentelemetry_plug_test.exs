@@ -1,5 +1,8 @@
 defmodule OpentelemetryPlugTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: false
+  require Record
+
+  Record.defrecord(:span, Record.extract(:span, from_lib: "opentelemetry/include/otel_span.hrl"))
 
   setup_all do
     OpentelemetryPlug.setup()
@@ -15,10 +18,42 @@ defmodule OpentelemetryPlugTest do
     :otel_batch_processor.set_exporter(:otel_exporter_pid, self())
   end
 
+  @default_attrs ~w(
+    http.flavor
+    http.method
+    http.scheme
+    http.status_code
+    http.target
+    http.user_agent
+    net.host.ip
+    net.host.port
+    net.peer.ip
+    net.peer.name
+    net.peer.port
+    net.transport
+  )
+
   test "creates span and adds propagation headers" do
     assert {200, headers, "Hello world"} = request(:get, "/hello/world")
-    assert {"traceparent", _} = List.keyfind(headers, "traceparent", 0)
-    assert_receive {:span, _}, 5000
+
+    assert List.keymember?(headers, "traceparent", 0)
+    assert_receive {:span, span(attributes: attrs)}, 5000
+
+    for attr <- @default_attrs do
+      assert List.keymember?(attrs, attr, 0)
+    end
+  end
+
+  test "adds optional attributes when available" do
+    Application.put_env(:opentelemetry_plug, :server_name, "example.com")
+
+    assert {200, _headers, _body} =
+             request(:get, "/hello/world", [{"x-forwarded-for", "1.1.1.1"}])
+
+    assert_receive {:span, span(attributes: attrs)}, 5000
+
+    assert List.keymember?(attrs, "http.client_ip", 0)
+    assert List.keymember?(attrs, "http.server_name", 0)
   end
 
   defp base_url do

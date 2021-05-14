@@ -76,7 +76,7 @@ defmodule OpentelemetryPlug do
 
   @doc false
   def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
-    # TODO: add config for what paths are traced
+    save_parent_ctx()
     # setup OpenTelemetry context based on request headers
     :otel_propagator.text_map_extract(conn.req_headers)
 
@@ -100,8 +100,8 @@ defmodule OpentelemetryPlug do
       {"net.peer.name", host},
       {"net.transport", "IP.TCP"},
       {"net.host.ip", to_string(:inet_parse.ntoa(conn.remote_ip))},
-      {"net.host.port", conn.port} | optional_attributes(conn)
-      # {"net.host.name", HostName}
+      {"net.host.port", conn.port}
+      | optional_attributes(conn)
     ]
 
     # TODO: Plug should provide a monotonic native time in measurements to use here
@@ -115,26 +115,26 @@ defmodule OpentelemetryPlug do
   @doc false
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
     if in_span?() do
-      OpenTelemetry.Tracer.set_attribute("http.status", conn.status)
+      OpenTelemetry.Tracer.set_attribute("http.status_code", conn.status)
       OpenTelemetry.Tracer.end_span()
+      restore_parent_ctx()
     end
   end
 
   @doc false
-  def handle_exception(
-        _,
-        _measurements,
-        %{kind: _kind, reason: reason, stacktrace: stacktrace},
-        _config
-      ) do
+  def handle_exception(_, _measurements, metadata, _config) do
     if in_span?() do
+      %{kind: _kind, reason: reason, stacktrace: stacktrace} = metadata
+
       OpenTelemetry.Span.record_exception(
         OpenTelemetry.Tracer.current_span_ctx(),
         reason,
         stacktrace
       )
 
+      OpenTelemetry.Tracer.set_attribute("http.status_code", 500)
       OpenTelemetry.Tracer.end_span()
+      restore_parent_ctx()
     end
   end
 
@@ -151,24 +151,13 @@ defmodule OpentelemetryPlug do
   end
 
   defp optional_attributes(conn) do
-    # for some reason Elixir removed Enum.filter_map in 1.5
-    # so just using Erlang's list module
-    :lists.filtermap(
-      fn {attr, fun} ->
-        case fun.(conn) do
-          nil ->
-            false
-
-          value ->
-            {true, {attr, value}}
-        end
-      end,
-      [{"http.client_ip", &client_ip/1}, {"http.server_name", &server_name/1}]
-    )
+    [{"http.client_ip", &client_ip/1}, {"http.server_name", &server_name/1}]
+    |> Enum.map(fn {attr, fun} -> {attr, fun.(conn)} end)
+    |> Enum.reject(&is_nil(elem(&1, 1)))
   end
 
   defp client_ip(conn) do
-    case Plug.Conn.get_req_header(conn, "X-Forwarded-For") do
+    case Plug.Conn.get_req_header(conn, "x-forwarded-for") do
       [] ->
         nil
 
@@ -178,7 +167,7 @@ defmodule OpentelemetryPlug do
   end
 
   defp server_name(_) do
-    Application.get_env(OpentelemetryPlug, :server_name, nil)
+    Application.get_env(:opentelemetry_plug, :server_name, nil)
   end
 
   defp http_flavor({_adapter_name, meta}) do
@@ -190,5 +179,17 @@ defmodule OpentelemetryPlug do
       :QUIC -> :QUIC
       nil -> ""
     end
+  end
+
+  @ctx_key {__MODULE__, :parent_ctx}
+  defp save_parent_ctx() do
+    ctx = OpenTelemetry.Tracer.current_span_ctx()
+    Process.put(@ctx_key, ctx)
+  end
+
+  defp restore_parent_ctx() do
+    ctx = Process.get(@ctx_key, :undefined)
+    Process.delete(@ctx_key)
+    OpenTelemetry.Tracer.set_current_span(ctx)
   end
 end
