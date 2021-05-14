@@ -26,51 +26,37 @@ defmodule OpentelemetryPlug do
   end
 
   @doc """
-  Attaches the OpentelemetryPlug handler to your Plug prefix events. This
+  Attaches the OpentelemetryPlug handler to your Plug.Router events. This
   should be called from your application behaviour on startup.
 
   Example:
 
       OpentelemetryPlug.setup()
 
-  You may also supply the following options as an optional argument:
-
-    * `:event_prefix` - the
   """
-  def setup(config \\ []) do
+  def setup() do
     # register the tracer. just re-registers if called for multiple repos
     _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
-
-    # :telemetry.attach_many(
-    #   {__MODULE__, :debug},
-    #   [
-    #     [:plug, :router_dispatch, :start],
-    #     [:plug, :router_dispatch, :stop],
-    #     [:plug, :router_dispatch, :exception]
-    #   ],
-    #   &IO.inspect({&1, &2, &3, &4}, label: Enum.join(&1, ".")),
-    #   %{}
-    # )
 
     :telemetry.attach(
       {__MODULE__, :plug_router_start},
       [:plug, :router_dispatch, :start],
       &__MODULE__.handle_start/4,
-      config
+      nil
     )
 
     :telemetry.attach(
       {__MODULE__, :plug_router_stop},
       [:plug, :router_dispatch, :stop],
       &__MODULE__.handle_stop/4,
-      config
+      nil
     )
 
     :telemetry.attach(
       {__MODULE__, :plug_router_exception},
       [:plug, :router_dispatch, :exception],
       &__MODULE__.handle_exception/4,
-      config
+      nil
     )
   end
 

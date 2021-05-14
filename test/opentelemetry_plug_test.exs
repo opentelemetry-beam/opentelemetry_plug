@@ -5,7 +5,10 @@ defmodule OpentelemetryPlugTest do
   Record.defrecord(:span, Record.extract(:span, from_lib: "opentelemetry/include/otel_span.hrl"))
 
   for r <- [:event, :status] do
-    Record.defrecord(r, Record.extract(r, from_lib: "opentelemetry_api/include/opentelemetry.hrl"))
+    Record.defrecord(
+      r,
+      Record.extract(r, from_lib: "opentelemetry_api/include/opentelemetry.hrl")
+    )
   end
 
   setup_all do
@@ -68,6 +71,7 @@ defmodule OpentelemetryPlugTest do
     assert {"http.status_code", 500} = List.keyfind(attrs, "http.status_code", 0)
     assert status(code: :error, message: _) = span_status
     assert [event(name: "exception", attributes: evt_attrs)] = events
+
     for key <- ~w(exception.type exception.message exception.stacktrace) do
       assert List.keymember?(evt_attrs, key, 0)
     end
