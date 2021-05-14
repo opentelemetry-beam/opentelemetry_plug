@@ -3,8 +3,8 @@ defmodule OpentelemetryPlug do
   Telemetry handler for creating OpenTelemetry Spans from Plug events.
   """
 
-  require OpenTelemetry.Tracer
-  require OpenTelemetry.Span
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OpenTelemetry.Span
 
   defmodule Propagation do
     @moduledoc """
@@ -93,17 +93,16 @@ defmodule OpentelemetryPlug do
 
     # TODO: Plug should provide a monotonic native time in measurements to use here
     # for the `start_time` option
-    span_ctx =
-      OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes, kind: :server})
+    span_ctx = Tracer.start_span(span_name, %{attributes: attributes, kind: :server})
 
-    OpenTelemetry.Tracer.set_current_span(span_ctx)
+    Tracer.set_current_span(span_ctx)
   end
 
   @doc false
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
     if in_span?() do
-      OpenTelemetry.Tracer.set_attribute("http.status_code", conn.status)
-      OpenTelemetry.Tracer.end_span()
+      Tracer.set_attribute("http.status_code", conn.status)
+      Tracer.end_span()
       restore_parent_ctx()
     end
   end
@@ -114,20 +113,20 @@ defmodule OpentelemetryPlug do
       %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
       exception = Exception.normalize(kind, reason, stacktrace)
 
-      OpenTelemetry.Span.record_exception(
-        OpenTelemetry.Tracer.current_span_ctx(),
+      Span.record_exception(
+        Tracer.current_span_ctx(),
         exception,
         stacktrace
       )
 
-      OpenTelemetry.Tracer.set_status(OpenTelemetry.status(:error, Exception.message(exception)))
-      OpenTelemetry.Tracer.set_attribute("http.status_code", 500)
-      OpenTelemetry.Tracer.end_span()
+      Tracer.set_status(OpenTelemetry.status(:error, Exception.message(exception)))
+      Tracer.set_attribute("http.status_code", 500)
+      Tracer.end_span()
       restore_parent_ctx()
     end
   end
 
-  defp in_span?, do: OpenTelemetry.Tracer.current_span_ctx() != :undefined
+  defp in_span?, do: Tracer.current_span_ctx() != :undefined
 
   defp header_or_empty(conn, header) do
     case Plug.Conn.get_req_header(conn, header) do
@@ -172,13 +171,13 @@ defmodule OpentelemetryPlug do
 
   @ctx_key {__MODULE__, :parent_ctx}
   defp save_parent_ctx() do
-    ctx = OpenTelemetry.Tracer.current_span_ctx()
+    ctx = Tracer.current_span_ctx()
     Process.put(@ctx_key, ctx)
   end
 
   defp restore_parent_ctx() do
     ctx = Process.get(@ctx_key, :undefined)
     Process.delete(@ctx_key)
-    OpenTelemetry.Tracer.set_current_span(ctx)
+    Tracer.set_current_span(ctx)
   end
 end
