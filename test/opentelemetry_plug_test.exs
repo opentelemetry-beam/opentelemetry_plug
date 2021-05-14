@@ -4,6 +4,10 @@ defmodule OpentelemetryPlugTest do
 
   Record.defrecord(:span, Record.extract(:span, from_lib: "opentelemetry/include/otel_span.hrl"))
 
+  for r <- [:event, :status] do
+    Record.defrecord(r, Record.extract(r, from_lib: "opentelemetry_api/include/opentelemetry.hrl"))
+  end
+
   setup_all do
     OpentelemetryPlug.setup()
 
@@ -56,6 +60,18 @@ defmodule OpentelemetryPlugTest do
     assert List.keymember?(attrs, "http.server_name", 0)
   end
 
+  test "records exceptions" do
+    assert {500, _, _} = request(:get, "/hello/crash")
+    assert_receive {:span, span(attributes: attrs, status: span_status, events: events)}, 5000
+
+    assert {"http.status_code", 500} = List.keyfind(attrs, "http.status_code", 0)
+    assert status(code: :error, message: _) = span_status
+    assert [event(name: "exception", attributes: evt_attrs)] = events
+    for key <- ~w(exception.type exception.message exception.stacktrace) do
+      assert List.keymember?(evt_attrs, key, 0)
+    end
+  end
+
   defp base_url do
     info = :ranch.info(MyRouter.HTTP)
     port = Keyword.fetch!(info, :port)
@@ -87,6 +103,11 @@ defmodule MyRouter do
   plug :match
   plug OpentelemetryPlug.Propagation
   plug :dispatch
+
+  match "/hello/crash" do
+    _ = conn
+    raise ArgumentError
+  end
 
   match "/hello/:foo" do
     case OpenTelemetry.Tracer.current_span_ctx() do

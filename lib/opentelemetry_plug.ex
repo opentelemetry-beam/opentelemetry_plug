@@ -124,14 +124,16 @@ defmodule OpentelemetryPlug do
   @doc false
   def handle_exception(_, _measurements, metadata, _config) do
     if in_span?() do
-      %{kind: _kind, reason: reason, stacktrace: stacktrace} = metadata
+      %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
+      exception = Exception.normalize(kind, reason, stacktrace)
 
       OpenTelemetry.Span.record_exception(
         OpenTelemetry.Tracer.current_span_ctx(),
-        reason,
+        exception,
         stacktrace
       )
 
+      OpenTelemetry.Tracer.set_status(OpenTelemetry.status(:error, Exception.message(exception)))
       OpenTelemetry.Tracer.set_attribute("http.status_code", 500)
       OpenTelemetry.Tracer.end_span()
       restore_parent_ctx()
