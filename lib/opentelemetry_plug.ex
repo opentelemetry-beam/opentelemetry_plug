@@ -20,7 +20,7 @@ defmodule OpentelemetryPlug do
     end
 
     @impl true
-    def call(conn, opts) do
+    def call(conn, _opts) do
       register_before_send(conn, &merge_resp_headers(&1, :otel_propagator.text_map_inject([])))
     end
   end
