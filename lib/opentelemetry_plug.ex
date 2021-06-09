@@ -62,7 +62,6 @@ defmodule OpentelemetryPlug do
 
   @doc false
   def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
-    save_parent_ctx()
     # setup OpenTelemetry context based on request headers
     :otel_propagator.text_map_extract(conn.req_headers)
 
@@ -74,22 +73,22 @@ defmodule OpentelemetryPlug do
     host = header_or_empty(conn, "Host")
     peer_ip = Map.get(peer_data, :address)
 
-    attributes = [
-      {"http.target", conn.request_path},
-      {"http.host", conn.host},
-      {"http.scheme", conn.scheme},
-      {"http.flavor", http_flavor(conn.adapter)},
-      {"http.route", route},
-      {"http.user_agent", user_agent},
-      {"http.method", conn.method},
-      {"net.peer.ip", to_string(:inet_parse.ntoa(peer_ip))},
-      {"net.peer.port", peer_data.port},
-      {"net.peer.name", host},
-      {"net.transport", "IP.TCP"},
-      {"net.host.ip", to_string(:inet_parse.ntoa(conn.remote_ip))},
-      {"net.host.port", conn.port}
-      | optional_attributes(conn)
-    ]
+    attributes =
+      [
+        "http.target": conn.request_path,
+        "http.host": conn.host,
+        "http.scheme": conn.scheme,
+        "http.flavor": http_flavor(conn.adapter),
+        "http.route": route,
+        "http.user_agent": user_agent,
+        "http.method": conn.method,
+        "net.peer.ip": to_string(:inet_parse.ntoa(peer_ip)),
+        "net.peer.port": peer_data.port,
+        "net.peer.name": host,
+        "net.transport": "IP.TCP",
+        "net.host.ip": to_string(:inet_parse.ntoa(conn.remote_ip)),
+        "net.host.port": conn.port
+      ] ++ optional_attributes(conn)
 
     # TODO: Plug should provide a monotonic native time in measurements to use here
     # for the `start_time` option
@@ -100,42 +99,34 @@ defmodule OpentelemetryPlug do
 
   @doc false
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
-    if in_span?() do
-      Tracer.set_attribute("http.status_code", conn.status)
-      # For HTTP status codes in the 4xx and 5xx ranges, as well as any other
-      # code the client failed to interpret, status MUST be set to Error.
-      #
-      # Don't set the span status description if the reason can be inferred from
-      # http.status_code.
-      if conn.status >= 400 do
-        Tracer.set_status(OpenTelemetry.status(:error, ""))
-      end
-
-      Tracer.end_span()
-      restore_parent_ctx()
+    Tracer.set_attribute(:"http.status_code", conn.status)
+    # For HTTP status codes in the 4xx and 5xx ranges, as well as any other
+    # code the client failed to interpret, status MUST be set to Error.
+    #
+    # Don't set the span status description if the reason can be inferred from
+    # http.status_code.
+    if conn.status >= 400 do
+      Tracer.set_status(OpenTelemetry.status(:error, ""))
     end
+
+    Tracer.end_span()
   end
 
   @doc false
   def handle_exception(_, _measurements, metadata, _config) do
-    if in_span?() do
-      %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
-      exception = Exception.normalize(kind, reason, stacktrace)
+    %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
+    exception = Exception.normalize(kind, reason, stacktrace)
 
-      Span.record_exception(
-        Tracer.current_span_ctx(),
-        exception,
-        stacktrace
-      )
+    Span.record_exception(
+      Tracer.current_span_ctx(),
+      exception,
+      stacktrace
+    )
 
-      Tracer.set_status(OpenTelemetry.status(:error, Exception.message(exception)))
-      Tracer.set_attribute("http.status_code", 500)
-      Tracer.end_span()
-      restore_parent_ctx()
-    end
+    Tracer.set_status(OpenTelemetry.status(:error, Exception.message(exception)))
+    Tracer.set_attribute(:"http.status_code", 500)
+    Tracer.end_span()
   end
-
-  defp in_span?, do: Tracer.current_span_ctx() != :undefined
 
   defp header_or_empty(conn, header) do
     case Plug.Conn.get_req_header(conn, header) do
@@ -148,7 +139,7 @@ defmodule OpentelemetryPlug do
   end
 
   defp optional_attributes(conn) do
-    [{"http.client_ip", &client_ip/1}, {"http.server_name", &server_name/1}]
+    ["http.client_ip": &client_ip/1, "http.server_name": &server_name/1]
     |> Enum.map(fn {attr, fun} -> {attr, fun.(conn)} end)
     |> Enum.reject(&is_nil(elem(&1, 1)))
   end
@@ -176,17 +167,5 @@ defmodule OpentelemetryPlug do
       :QUIC -> :QUIC
       nil -> ""
     end
-  end
-
-  @ctx_key {__MODULE__, :parent_ctx}
-  defp save_parent_ctx() do
-    ctx = Tracer.current_span_ctx()
-    Process.put(@ctx_key, ctx)
-  end
-
-  defp restore_parent_ctx() do
-    ctx = Process.get(@ctx_key, :undefined)
-    Process.delete(@ctx_key)
-    Tracer.set_current_span(ctx)
   end
 end

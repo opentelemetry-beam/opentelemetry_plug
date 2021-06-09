@@ -39,7 +39,7 @@ defmodule OpentelemetryPlugTest do
     net.peer.name
     net.peer.port
     net.transport
-  )
+  )a
 
   test "creates span and adds propagation headers" do
     assert {200, headers, "Hello world"} = request(:get, "/hello/world")
@@ -60,15 +60,15 @@ defmodule OpentelemetryPlugTest do
 
     assert_receive {:span, span(attributes: attrs)}, 5000
 
-    assert List.keymember?(attrs, "http.client_ip", 0)
-    assert List.keymember?(attrs, "http.server_name", 0)
+    assert List.keymember?(attrs, :"http.client_ip", 0)
+    assert List.keymember?(attrs, :"http.server_name", 0)
   end
 
   test "records exceptions" do
     assert {500, _, _} = request(:get, "/hello/crash")
     assert_receive {:span, span(attributes: attrs, status: span_status, events: events)}, 5000
 
-    assert {"http.status_code", 500} = List.keyfind(attrs, "http.status_code", 0)
+    assert {:"http.status_code", 500} = List.keyfind(attrs, :"http.status_code", 0)
     assert status(code: :error, message: _) = span_status
     assert [event(name: "exception", attributes: evt_attrs)] = events
 
@@ -80,7 +80,7 @@ defmodule OpentelemetryPlugTest do
   test "sets span status on non-successful status codes" do
     assert {400, _, _} = request(:get, "/hello/bad-request")
     assert_receive {:span, span(attributes: attrs, status: span_status)}, 5000
-    assert {"http.status_code", 400} = List.keyfind(attrs, "http.status_code", 0)
+    assert {:"http.status_code", 400} = List.keyfind(attrs, :"http.status_code", 0)
     assert status(code: :error, message: _) = span_status
   end
 
