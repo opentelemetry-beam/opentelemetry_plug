@@ -65,7 +65,7 @@ defmodule OpentelemetryPlug do
     # setup OpenTelemetry context based on request headers
     :otel_propagator.text_map_extract(conn.req_headers)
 
-    span_name = "#{conn.method} #{route}"
+    span_name = "#{route}"
 
     peer_data = Plug.Conn.get_peer_data(conn)
 

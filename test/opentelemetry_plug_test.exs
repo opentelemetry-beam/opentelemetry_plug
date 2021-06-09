@@ -45,7 +45,7 @@ defmodule OpentelemetryPlugTest do
     assert {200, headers, "Hello world"} = request(:get, "/hello/world")
 
     assert List.keymember?(headers, "traceparent", 0)
-    assert_receive {:span, span(attributes: attrs)}, 5000
+    assert_receive {:span, span(name: "/hello/:foo", attributes: attrs)}, 5000
 
     for attr <- @default_attrs do
       assert List.keymember?(attrs, attr, 0)
