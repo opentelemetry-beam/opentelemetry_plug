@@ -31,7 +31,7 @@ defmodule OpentelemetryPlug do
 
   Example:
 
-      OpentelemetryPlug.setup()
+  OpentelemetryPlug.setup()
 
   """
   def setup() do
@@ -62,6 +62,7 @@ defmodule OpentelemetryPlug do
 
   @doc false
   def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
+    save_parent_ctx()
     # setup OpenTelemetry context based on request headers
     :otel_propagator.text_map_extract(conn.req_headers)
 
@@ -110,6 +111,7 @@ defmodule OpentelemetryPlug do
     end
 
     Tracer.end_span()
+    restore_parent_ctx()
   end
 
   @doc false
@@ -126,6 +128,7 @@ defmodule OpentelemetryPlug do
     Tracer.set_status(OpenTelemetry.status(:error, Exception.message(exception)))
     Tracer.set_attribute(:"http.status_code", 500)
     Tracer.end_span()
+    restore_parent_ctx()
   end
 
   defp header_or_empty(conn, header) do
@@ -167,5 +170,17 @@ defmodule OpentelemetryPlug do
       :QUIC -> :QUIC
       nil -> ""
     end
+  end
+
+  @ctx_key {__MODULE__, :parent_ctx}
+  defp save_parent_ctx() do
+    ctx = Tracer.current_span_ctx()
+    Process.put(@ctx_key, ctx)
+  end
+
+  defp restore_parent_ctx() do
+    ctx = Process.get(@ctx_key, :undefined)
+    Process.delete(@ctx_key)
+    Tracer.set_current_span(ctx)
   end
 end
