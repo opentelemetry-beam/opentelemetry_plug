@@ -8,7 +8,15 @@ defmodule OpentelemetryPlug do
 
   defmodule Propagation do
     @moduledoc """
-    Adds OpenTelemetry context propagation headers to the Plug response
+    Adds OpenTelemetry context propagation headers to the Plug response.
+
+    ### WARNING
+
+    These context headers are potentially dangerous to expose to third-parties.
+    W3C recommends against including them except in cases where both client and
+    server participate in the trace.
+
+    See https://www.w3.org/TR/trace-context/#other-risks for more information.
     """
 
     @behaviour Plug
