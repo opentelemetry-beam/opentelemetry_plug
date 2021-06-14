@@ -116,7 +116,10 @@ defmodule OpentelemetryPlug do
 
   @doc false
   def handle_exception(_, _measurements, metadata, _config) do
-    %{kind: kind, reason: reason, stacktrace: stacktrace} = metadata
+    %{kind: kind, stacktrace: stacktrace} = metadata
+    # This metadata key changed from :error to :reason in Plug 1.10.3
+    reason = metadata[:reason] || metadata[:error]
+
     exception = Exception.normalize(kind, reason, stacktrace)
 
     Span.record_exception(
