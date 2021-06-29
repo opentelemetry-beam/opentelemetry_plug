@@ -3,74 +3,78 @@ defmodule OpentelemetryPlug do
   Telemetry handler for creating OpenTelemetry Spans from Plug events.
   """
 
-  require OpenTelemetry.Tracer
-  require OpenTelemetry.Span
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OpenTelemetry.Span
+
+  defmodule Propagation do
+    @moduledoc """
+    Adds OpenTelemetry context propagation headers to the Plug response.
+
+    ### WARNING
+
+    These context headers are potentially dangerous to expose to third-parties.
+    W3C recommends against including them except in cases where both client and
+    server participate in the trace.
+
+    See https://www.w3.org/TR/trace-context/#other-risks for more information.
+    """
+
+    @behaviour Plug
+    import Plug.Conn, only: [register_before_send: 2, merge_resp_headers: 2]
+
+    @impl true
+    def init(opts) do
+      opts
+    end
+
+    @impl true
+    def call(conn, _opts) do
+      register_before_send(conn, &merge_resp_headers(&1, :otel_propagator.text_map_inject([])))
+    end
+  end
 
   @doc """
-  Attaches the OpentelemetryPlug handler to your Plug prefix events. This
+  Attaches the OpentelemetryPlug handler to your Plug.Router events. This
   should be called from your application behaviour on startup.
 
   Example:
 
-      OpentelemetryPlug.setup([])
+  OpentelemetryPlug.setup()
 
-  You may also supply the following options in the second argument:
-
-    * `:time_unit` - a time unit used to convert the values of query phase
-      timings, defaults to `:microsecond`. See `System.convert_time_unit/3`
-
-    * `:span_prefix` - the first part of the span name, as a `String.t`,
-      defaults to the concatenation of the event name with periods, e.g.
-      `"my.plug.start"`.
   """
-  def setup(config \\ []) do
+  def setup() do
     # register the tracer. just re-registers if called for multiple repos
     _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
 
     :telemetry.attach(
-      {__MODULE__, :phoenix_tracer_router_start},
-      [:phoenix, :router_dispatch, :start],
-      &__MODULE__.handle_route/4,
-      config
-    )
-
-    :telemetry.attach(
-      {__MODULE__, :plug_tracer_router_start},
+      {__MODULE__, :plug_router_start},
       [:plug, :router_dispatch, :start],
-      &__MODULE__.handle_route/4,
-      config
-    )
-
-    :telemetry.attach(
-      {__MODULE__, :plug_tracer_start},
-      [:plug_adapter, :call, :start],
       &__MODULE__.handle_start/4,
-      config
+      nil
     )
 
     :telemetry.attach(
-      {__MODULE__, :plug_tracer_stop},
-      [:plug_adapter, :call, :stop],
+      {__MODULE__, :plug_router_stop},
+      [:plug, :router_dispatch, :stop],
       &__MODULE__.handle_stop/4,
-      config
+      nil
     )
 
     :telemetry.attach(
-      {__MODULE__, :plug_tracer_exception},
-      [:plug_adapter, :call, :exception],
+      {__MODULE__, :plug_router_exception},
+      [:plug, :router_dispatch, :exception],
       &__MODULE__.handle_exception/4,
-      config
+      nil
     )
   end
 
   @doc false
-  def handle_start(_, _measurements, %{conn: conn}, _config) do
-    # TODO: add config for what paths are traced
-
+  def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
+    save_parent_ctx()
     # setup OpenTelemetry context based on request headers
-    :ot_propagation.http_extract(conn.req_headers)
+    :otel_propagator.text_map_extract(conn.req_headers)
 
-    span_name = "HTTP " <> conn.method
+    span_name = "#{route}"
 
     peer_data = Plug.Conn.get_peer_data(conn)
 
@@ -78,51 +82,65 @@ defmodule OpentelemetryPlug do
     host = header_or_empty(conn, "Host")
     peer_ip = Map.get(peer_data, :address)
 
-    attributes = [
-      {"http.target", conn.request_path},
-      {"http.host", conn.host},
-      {"http.scheme", conn.scheme},
-      {"http.user_agent", user_agent},
-      {"http.method", conn.method},
-      {"net.peer.ip", to_string(:inet_parse.ntoa(peer_ip))},
-      {"net.peer.port", peer_data.port},
-      {"net.peer.name", host},
-      {"net.transport", "IP.TCP"},
-      {"net.host.ip", to_string(:inet_parse.ntoa(conn.remote_ip))},
-      {"net.host.port", conn.port} | optional_attributes(conn)
-      # {"net.host.name", HostName}
-    ]
+    attributes =
+      [
+        "http.target": conn.request_path,
+        "http.host": conn.host,
+        "http.scheme": conn.scheme,
+        "http.flavor": http_flavor(conn.adapter),
+        "http.route": route,
+        "http.user_agent": user_agent,
+        "http.method": conn.method,
+        "net.peer.ip": to_string(:inet_parse.ntoa(peer_ip)),
+        "net.peer.port": peer_data.port,
+        "net.peer.name": host,
+        "net.transport": "IP.TCP",
+        "net.host.ip": to_string(:inet_parse.ntoa(conn.remote_ip)),
+        "net.host.port": conn.port
+      ] ++ optional_attributes(conn)
 
     # TODO: Plug should provide a monotonic native time in measurements to use here
     # for the `start_time` option
-    OpenTelemetry.Tracer.start_span(span_name, %{attributes: attributes})
-  end
+    span_ctx = Tracer.start_span(span_name, %{attributes: attributes, kind: :server})
 
-  @doc false
-  def handle_route(_, _measurements, %{route: route}, _config) do
-    # TODO: add config option to allow `conn.request_path` as span name
-    if in_span?() do
-      OpenTelemetry.Span.update_name(route)
-    end
+    Tracer.set_current_span(span_ctx)
   end
 
   @doc false
   def handle_stop(_, _measurements, %{conn: conn}, _config) do
-    if in_span?() do
-      OpenTelemetry.Span.set_attribute("http.status", conn.status)
-      OpenTelemetry.Tracer.end_span()
+    Tracer.set_attribute(:"http.status_code", conn.status)
+    # For HTTP status codes in the 4xx and 5xx ranges, as well as any other
+    # code the client failed to interpret, status MUST be set to Error.
+    #
+    # Don't set the span status description if the reason can be inferred from
+    # http.status_code.
+    if conn.status >= 400 do
+      Tracer.set_status(OpenTelemetry.status(:error, ""))
     end
+
+    Tracer.end_span()
+    restore_parent_ctx()
   end
 
   @doc false
-  def handle_exception(_, _measurements, %{conn: _conn}, _config) do
-    if in_span?() do
-      OpenTelemetry.Span.set_status(OpenTelemetry.status('UnknownError', "unknown error"))
-      OpenTelemetry.Tracer.end_span()
-    end
-  end
+  def handle_exception(_, _measurements, metadata, _config) do
+    %{kind: kind, stacktrace: stacktrace} = metadata
+    # This metadata key changed from :error to :reason in Plug 1.10.3
+    reason = metadata[:reason] || metadata[:error]
 
-  defp in_span?, do: OpenTelemetry.Tracer.current_ctx() != :undefined
+    exception = Exception.normalize(kind, reason, stacktrace)
+
+    Span.record_exception(
+      Tracer.current_span_ctx(),
+      exception,
+      stacktrace
+    )
+
+    Tracer.set_status(OpenTelemetry.status(:error, Exception.message(exception)))
+    Tracer.set_attribute(:"http.status_code", 500)
+    Tracer.end_span()
+    restore_parent_ctx()
+  end
 
   defp header_or_empty(conn, header) do
     case Plug.Conn.get_req_header(conn, header) do
@@ -135,24 +153,13 @@ defmodule OpentelemetryPlug do
   end
 
   defp optional_attributes(conn) do
-    # for some reason Elixir removed Enum.filter_map in 1.5
-    # so just using Erlang's list module
-    :lists.filtermap(
-      fn {attr, fun} ->
-        case fun.(conn) do
-          nil ->
-            false
-
-          value ->
-            {true, {attr, value}}
-        end
-      end,
-      [{"http.client_ip", &client_ip/1}, {"http.server_name", &server_name/1}]
-    )
+    ["http.client_ip": &client_ip/1, "http.server_name": &server_name/1]
+    |> Enum.map(fn {attr, fun} -> {attr, fun.(conn)} end)
+    |> Enum.reject(&is_nil(elem(&1, 1)))
   end
 
   defp client_ip(conn) do
-    case Plug.Conn.get_req_header(conn, "X-Forwarded-For") do
+    case Plug.Conn.get_req_header(conn, "x-forwarded-for") do
       [] ->
         nil
 
@@ -162,6 +169,29 @@ defmodule OpentelemetryPlug do
   end
 
   defp server_name(_) do
-    Application.get_env(OpentelemetryPlug, :server_name, nil)
+    Application.get_env(:opentelemetry_plug, :server_name, nil)
+  end
+
+  defp http_flavor({_adapter_name, meta}) do
+    case Map.get(meta, :version) do
+      :"HTTP/1.0" -> :"1.0"
+      :"HTTP/1.1" -> :"1.1"
+      :"HTTP/2.0" -> :"2.0"
+      :SPDY -> :SPDY
+      :QUIC -> :QUIC
+      nil -> ""
+    end
+  end
+
+  @ctx_key {__MODULE__, :parent_ctx}
+  defp save_parent_ctx() do
+    ctx = Tracer.current_span_ctx()
+    Process.put(@ctx_key, ctx)
+  end
+
+  defp restore_parent_ctx() do
+    ctx = Process.get(@ctx_key, :undefined)
+    Process.delete(@ctx_key)
+    Tracer.set_current_span(ctx)
   end
 end
