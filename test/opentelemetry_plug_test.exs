@@ -84,6 +84,18 @@ defmodule OpentelemetryPlugTest do
     assert status(code: :error, message: _) = span_status
   end
 
+  test "gracefully handles nested routers" do
+    assert {200, _, _} = request(:get, "/hello/nested")
+
+    assert_receive {:span,
+                    span(name: "/hello/nested/*glob/", parent_span_id: parent, trace_id: trace_id)},
+                   5000
+
+    assert_receive {:span,
+                    span(name: "/hello/nested/*glob", span_id: ^parent, trace_id: ^trace_id)},
+                   5000
+  end
+
   defp base_url do
     info = :ranch.info(MyRouter.HTTP)
     port = Keyword.fetch!(info, :port)
@@ -109,12 +121,25 @@ defmodule OpentelemetryPlugTest do
   end
 end
 
+defmodule MyRouter.NestedRouter do
+  use Plug.Router
+
+  plug :match
+  plug :dispatch
+
+  match "/" do
+    send_resp(conn, 200, "Hello from nested")
+  end
+end
+
 defmodule MyRouter do
   use Plug.Router
 
   plug :match
   plug OpentelemetryPlug.Propagation
   plug :dispatch
+
+  forward "/hello/nested", to: MyRouter.NestedRouter
 
   match "/hello/crash" do
     _ = conn

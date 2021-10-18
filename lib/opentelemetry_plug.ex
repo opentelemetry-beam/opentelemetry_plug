@@ -70,9 +70,13 @@ defmodule OpentelemetryPlug do
 
   @doc false
   def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
-    save_parent_ctx()
-    # setup OpenTelemetry context based on request headers
-    :otel_propagator.text_map_extract(conn.req_headers)
+    parent_ctx = save_parent_ctx()
+
+    if parent_ctx == :undefined do
+      # setup OpenTelemetry context based on request headers, but only if
+      # there's no context already
+      :otel_propagator.text_map_extract(conn.req_headers)
+    end
 
     span_name = "#{route}"
 
@@ -186,12 +190,30 @@ defmodule OpentelemetryPlug do
   @ctx_key {__MODULE__, :parent_ctx}
   defp save_parent_ctx() do
     ctx = Tracer.current_span_ctx()
-    Process.put(@ctx_key, ctx)
+
+    case Process.get(@ctx_key, :undefined) do
+      list when is_list(list) ->
+        Process.put(@ctx_key, [ctx | list])
+
+      :undefined ->
+        Process.put(@ctx_key, [ctx])
+    end
+
+    ctx
   end
 
   defp restore_parent_ctx() do
-    ctx = Process.get(@ctx_key, :undefined)
-    Process.delete(@ctx_key)
+    ctx =
+      case Process.get(@ctx_key, :undefined) do
+        [ctx | rest] ->
+          Process.put(@ctx_key, rest)
+          ctx
+
+        _ ->
+          Process.delete(@ctx_key)
+          :undefined
+      end
+
     Tracer.set_current_span(ctx)
   end
 end
