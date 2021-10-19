@@ -29,7 +29,7 @@ defmodule OpentelemetryPlug do
 
     @impl true
     def call(conn, _opts) do
-      register_before_send(conn, &merge_resp_headers(&1, :otel_propagator.text_map_inject([])))
+      register_before_send(conn, &merge_resp_headers(&1, OpentelemetryPlug.inject_header_context([])))
     end
   end
 
@@ -234,9 +234,17 @@ defmodule OpentelemetryPlug do
       def extract_header_context(headers) do
         :otel_propagator.text_map_extract(headers)
       end
+
+      def inject_header_context(headers) do
+        :otel_propagator.text_map_inject(headers)
+      end
     else
       def extract_header_context(headers) do
         :otel_propagator_text_map.extract(headers)
+      end
+
+      def inject_header_context(headers) do
+        :otel_propagator_text_map.inject(headers)
       end
     end
   end
