@@ -43,8 +43,7 @@ defmodule OpentelemetryPlug do
 
   """
   def setup() do
-    # register the tracer. just re-registers if called for multiple repos
-    _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
+    :ok = register_tracer()
 
     :telemetry.attach(
       {__MODULE__, :plug_router_start},
@@ -75,7 +74,7 @@ defmodule OpentelemetryPlug do
     if parent_ctx == :undefined do
       # setup OpenTelemetry context based on request headers, but only if
       # there's no context already
-      :otel_propagator.text_map_extract(conn.req_headers)
+      extract_header_context(conn.req_headers)
     end
 
     span_name = "#{route}"
@@ -215,5 +214,30 @@ defmodule OpentelemetryPlug do
       end
 
     Tracer.set_current_span(ctx)
+  end
+
+  # OpenTelemetry 1.0.0-rc.3 removed the need for registering application tracers.
+  if Code.ensure_loaded?(OpenTelemetry) do
+    if function_exported?(OpenTelemetry, :register_application_tracer, 1) do
+      def register_tracer do
+        _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
+        :ok
+      end
+    else
+      def register_tracer, do: :ok
+    end
+  end
+
+  # OpenTelemetry 1.0.0-rc.3 changed the text_map propagator API
+  if Code.ensure_loaded?(:otel_propagator) do
+    if function_exported?(:otel_propagator, :text_map_extract, 1) do
+      def extract_header_context(headers) do
+        :otel_propagator.text_map_extract(headers)
+      end
+    else
+      def extract_header_context(headers) do
+        :otel_propagator_text_map.extract(headers)
+      end
+    end
   end
 end
