@@ -180,9 +180,10 @@ defmodule OpentelemetryPlug do
       :"HTTP/1.0" -> :"1.0"
       :"HTTP/1.1" -> :"1.1"
       :"HTTP/2.0" -> :"2.0"
+      :"HTTP/2" -> :"2.0"
       :SPDY -> :SPDY
       :QUIC -> :QUIC
-      nil -> ""
+      _ -> ""
     end
   end
 
