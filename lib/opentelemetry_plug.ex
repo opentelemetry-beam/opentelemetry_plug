@@ -146,7 +146,7 @@ defmodule OpentelemetryPlug do
   end
 
   defp header_or_empty(conn, header) do
-    case Plug.Conn.get_req_header(conn, header) do
+    case Plug.Conn.get_req_header(conn, String.downcase(header)) do
       [] ->
         ""
 
