@@ -52,6 +52,24 @@ defmodule OpentelemetryPlugTest do
     end
   end
 
+  test "basic http attributes are set" do
+    # no query string
+    assert {200, _, "Hello world"} = request(:get, "/hello/world")
+    assert_receive {:span, span(name: "/hello/:foo", attributes: attrs)}, 5000
+
+    assert "GET" == attrs[:"http.method"]
+    assert :http == attrs[:"http.scheme"]
+    assert host() == attrs[:"http.host"]
+    assert "/hello/world" == attrs[:"http.target"]
+    assert "hackney" <> _ = attrs[:"http.user_agent"]
+
+    # query string
+    assert {200, _, "Hello world"} = request(:get, "/hello/world?param=one&other=42")
+    assert_receive {:span, span(name: "/hello/:foo", attributes: attrs)}, 5000
+
+    assert "/hello/world?param=one&other=42" == attrs[:"http.target"]
+  end
+
   test "adds optional attributes when available" do
     Application.put_env(:opentelemetry_plug, :server_name, "example.com")
 
@@ -96,11 +114,13 @@ defmodule OpentelemetryPlugTest do
                    5000
   end
 
+  defp host do
+    :ranch.info(MyRouter.HTTP) |> Keyword.fetch!(:ip) |> :inet.ntoa() |> to_string()
+  end
+
   defp base_url do
-    info = :ranch.info(MyRouter.HTTP)
-    port = Keyword.fetch!(info, :port)
-    ip = Keyword.fetch!(info, :ip)
-    "http://#{:inet.ntoa(ip)}:#{port}"
+    port = :ranch.info(MyRouter.HTTP) |> Keyword.fetch!(:port)
+    "http://#{host()}:#{port}"
   end
 
   defp request(:head = verb, path) do

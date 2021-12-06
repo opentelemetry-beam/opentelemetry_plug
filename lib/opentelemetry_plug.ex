@@ -87,7 +87,7 @@ defmodule OpentelemetryPlug do
 
     attributes =
       [
-        "http.target": conn.request_path,
+        "http.target": http_target(conn),
         "http.host": conn.host,
         "http.scheme": conn.scheme,
         "http.flavor": http_flavor(conn.adapter),
@@ -154,6 +154,9 @@ defmodule OpentelemetryPlug do
         host
     end
   end
+
+  defp http_target(conn) when conn.query_string == "" or is_nil(conn.query_string), do: conn.request_path
+  defp http_target(conn), do: conn.request_path <> "?" <> conn.query_string
 
   defp optional_attributes(conn) do
     ["http.client_ip": &client_ip/1, "http.server_name": &server_name/1]
