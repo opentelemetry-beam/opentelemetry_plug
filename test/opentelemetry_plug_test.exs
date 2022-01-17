@@ -2,13 +2,12 @@ defmodule OpentelemetryPlugTest do
   use ExUnit.Case, async: false
   require Record
 
-  Record.defrecord(:span, Record.extract(:span, from_lib: "opentelemetry/include/otel_span.hrl"))
+  for {name, spec} <- Record.extract_all(from_lib: "opentelemetry/include/otel_span.hrl") do
+    Record.defrecord(name, spec)
+  end
 
-  for r <- [:event, :status] do
-    Record.defrecord(
-      r,
-      Record.extract(r, from_lib: "opentelemetry_api/include/opentelemetry.hrl")
-    )
+  for {name, spec} <- Record.extract_all(from_lib: "opentelemetry_api/include/opentelemetry.hrl") do
+    Record.defrecord(name, spec)
   end
 
   setup_all do
@@ -47,8 +46,10 @@ defmodule OpentelemetryPlugTest do
     assert List.keymember?(headers, "traceparent", 0)
     assert_receive {:span, span(name: "/hello/:foo", attributes: attrs)}, 5000
 
+    attrs = :otel_attributes.map(attrs)
+
     for attr <- @default_attrs do
-      assert List.keymember?(attrs, attr, 0)
+      assert Map.has_key?(attrs, attr)
     end
   end
 
@@ -56,6 +57,8 @@ defmodule OpentelemetryPlugTest do
     # no query string
     assert {200, _, "Hello world"} = request(:get, "/hello/world")
     assert_receive {:span, span(name: "/hello/:foo", attributes: attrs)}, 5000
+
+    attrs = :otel_attributes.map(attrs)
 
     assert "GET" == attrs[:"http.method"]
     assert :http == attrs[:"http.scheme"]
@@ -66,6 +69,8 @@ defmodule OpentelemetryPlugTest do
     # query string
     assert {200, _, "Hello world"} = request(:get, "/hello/world?param=one&other=42")
     assert_receive {:span, span(name: "/hello/:foo", attributes: attrs)}, 5000
+
+    attrs = :otel_attributes.map(attrs)
 
     assert "/hello/world?param=one&other=42" == attrs[:"http.target"]
   end
@@ -78,27 +83,36 @@ defmodule OpentelemetryPlugTest do
 
     assert_receive {:span, span(attributes: attrs)}, 5000
 
-    assert List.keymember?(attrs, :"http.client_ip", 0)
-    assert List.keymember?(attrs, :"http.server_name", 0)
+    assert %{
+      "http.client_ip":  "1.1.1.1",
+      "http.server_name": "example.com"
+    } = :otel_attributes.map(attrs)
   end
 
   test "records exceptions" do
     assert {500, _, _} = request(:get, "/hello/crash")
     assert_receive {:span, span(attributes: attrs, status: span_status, events: events)}, 5000
 
-    assert {:"http.status_code", 500} = List.keyfind(attrs, :"http.status_code", 0)
+    attrs = :otel_attributes.map(attrs)
+
+    assert %{"http.status_code": 500} = attrs
     assert status(code: :error, message: _) = span_status
+
+    events = :otel_events.list(events)
     assert [event(name: "exception", attributes: evt_attrs)] = events
 
+    evt_attrs = :otel_attributes.map(evt_attrs)
+
     for key <- ~w(exception.type exception.message exception.stacktrace) do
-      assert List.keymember?(evt_attrs, key, 0)
+      assert Map.has_key?(evt_attrs, key)
     end
   end
 
   test "sets span status on non-successful status codes" do
     assert {400, _, _} = request(:get, "/hello/bad-request")
     assert_receive {:span, span(attributes: attrs, status: span_status)}, 5000
-    assert {:"http.status_code", 400} = List.keyfind(attrs, :"http.status_code", 0)
+    attrs = :otel_attributes.map(attrs)
+    assert %{"http.status_code": 400} = attrs
     assert status(code: :error, message: _) = span_status
   end
 
