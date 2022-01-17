@@ -29,7 +29,7 @@ defmodule OpentelemetryPlug do
 
     @impl true
     def call(conn, _opts) do
-      register_before_send(conn, &merge_resp_headers(&1, :otel_propagator.text_map_inject([])))
+      register_before_send(conn, &merge_resp_headers(&1, OpentelemetryPlug.inject_header_context([])))
     end
   end
 
@@ -43,8 +43,7 @@ defmodule OpentelemetryPlug do
 
   """
   def setup() do
-    # register the tracer. just re-registers if called for multiple repos
-    _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
+    :ok = register_tracer()
 
     :telemetry.attach(
       {__MODULE__, :plug_router_start},
@@ -70,9 +69,13 @@ defmodule OpentelemetryPlug do
 
   @doc false
   def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
-    save_parent_ctx()
-    # setup OpenTelemetry context based on request headers
-    :otel_propagator.text_map_extract(conn.req_headers)
+    parent_ctx = save_parent_ctx()
+
+    if parent_ctx == :undefined do
+      # setup OpenTelemetry context based on request headers, but only if
+      # there's no context already
+      extract_header_context(conn.req_headers)
+    end
 
     span_name = "#{route}"
 
@@ -84,7 +87,7 @@ defmodule OpentelemetryPlug do
 
     attributes =
       [
-        "http.target": conn.request_path,
+        "http.target": http_target(conn),
         "http.host": conn.host,
         "http.scheme": conn.scheme,
         "http.flavor": http_flavor(conn.adapter),
@@ -143,7 +146,7 @@ defmodule OpentelemetryPlug do
   end
 
   defp header_or_empty(conn, header) do
-    case Plug.Conn.get_req_header(conn, header) do
+    case Plug.Conn.get_req_header(conn, String.downcase(header)) do
       [] ->
         ""
 
@@ -151,6 +154,9 @@ defmodule OpentelemetryPlug do
         host
     end
   end
+
+  defp http_target(conn) when conn.query_string == "" or is_nil(conn.query_string), do: conn.request_path
+  defp http_target(conn), do: conn.request_path <> "?" <> conn.query_string
 
   defp optional_attributes(conn) do
     ["http.client_ip": &client_ip/1, "http.server_name": &server_name/1]
@@ -177,21 +183,73 @@ defmodule OpentelemetryPlug do
       :"HTTP/1.0" -> :"1.0"
       :"HTTP/1.1" -> :"1.1"
       :"HTTP/2.0" -> :"2.0"
+      :"HTTP/2" -> :"2.0"
       :SPDY -> :SPDY
       :QUIC -> :QUIC
-      nil -> ""
+      _ -> ""
     end
   end
 
   @ctx_key {__MODULE__, :parent_ctx}
   defp save_parent_ctx() do
     ctx = Tracer.current_span_ctx()
-    Process.put(@ctx_key, ctx)
+
+    case Process.get(@ctx_key, :undefined) do
+      list when is_list(list) ->
+        Process.put(@ctx_key, [ctx | list])
+
+      :undefined ->
+        Process.put(@ctx_key, [ctx])
+    end
+
+    ctx
   end
 
   defp restore_parent_ctx() do
-    ctx = Process.get(@ctx_key, :undefined)
-    Process.delete(@ctx_key)
+    ctx =
+      case Process.get(@ctx_key, :undefined) do
+        [ctx | rest] ->
+          Process.put(@ctx_key, rest)
+          ctx
+
+        _ ->
+          Process.delete(@ctx_key)
+          :undefined
+      end
+
     Tracer.set_current_span(ctx)
+  end
+
+  # OpenTelemetry 1.0.0-rc.3 removed the need for registering application tracers.
+  if Code.ensure_loaded?(OpenTelemetry) do
+    if function_exported?(OpenTelemetry, :register_application_tracer, 1) do
+      def register_tracer do
+        _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
+        :ok
+      end
+    else
+      def register_tracer, do: :ok
+    end
+  end
+
+  # OpenTelemetry 1.0.0-rc.3 changed the text_map propagator API
+  if Code.ensure_loaded?(:otel_propagator) do
+    if function_exported?(:otel_propagator, :text_map_extract, 1) do
+      def extract_header_context(headers) do
+        :otel_propagator.text_map_extract(headers)
+      end
+
+      def inject_header_context(headers) do
+        :otel_propagator.text_map_inject(headers)
+      end
+    else
+      def extract_header_context(headers) do
+        :otel_propagator_text_map.extract(headers)
+      end
+
+      def inject_header_context(headers) do
+        :otel_propagator_text_map.inject(headers)
+      end
+    end
   end
 end
