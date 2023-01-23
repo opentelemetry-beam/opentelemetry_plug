@@ -29,7 +29,7 @@ defmodule OpentelemetryPlug do
 
     @impl true
     def call(conn, _opts) do
-      register_before_send(conn, &merge_resp_headers(&1, :otel_propagator.text_map_inject([])))
+      register_before_send(conn, &merge_resp_headers(&1, :otel_propagator_text_map.inject([])))
     end
   end
 
@@ -43,9 +43,6 @@ defmodule OpentelemetryPlug do
 
   """
   def setup() do
-    # register the tracer. just re-registers if called for multiple repos
-    _ = OpenTelemetry.register_application_tracer(:opentelemetry_plug)
-
     :telemetry.attach(
       {__MODULE__, :plug_router_start},
       [:plug, :router_dispatch, :start],
@@ -68,11 +65,24 @@ defmodule OpentelemetryPlug do
     )
   end
 
+  @spec handle_start(
+          any,
+          any,
+          %{:conn => Plug.Conn.t(), :route => any, optional(any) => any},
+          any
+        ) ::
+          :undefined
+          | {:span_ctx, non_neg_integer, non_neg_integer, integer,
+             [
+               {binary | maybe_improper_list(any, binary | []),
+                binary | maybe_improper_list(any, binary | [])}
+             ], false | true | :undefined, boolean, false | true | :undefined,
+             :undefined | {atom, any}}
   @doc false
   def handle_start(_, _measurements, %{conn: conn, route: route}, _config) do
     save_parent_ctx()
     # setup OpenTelemetry context based on request headers
-    :otel_propagator.text_map_extract(conn.req_headers)
+    :otel_propagator_text_map.extract(conn.req_headers)
 
     span_name = "#{route}"
 
