@@ -2,14 +2,14 @@ defmodule OpentelemetryPlugTest do
   use ExUnit.Case, async: false
   require Record
 
-  Record.defrecord(:span, Record.extract(:span, from_lib: "opentelemetry/include/otel_span.hrl"))
-
-  for r <- [:event, :status] do
+  for r <- [:span, :event] do
     Record.defrecord(
       r,
-      Record.extract(r, from_lib: "opentelemetry_api/include/opentelemetry.hrl")
+      Record.extract(r, from_lib: "opentelemetry/include/otel_span.hrl")
     )
   end
+
+  Record.defrecord(:status, Record.extract(:status, from_lib: "opentelemetry_api/include/opentelemetry.hrl"))
 
   setup_all do
     OpentelemetryPlug.setup()
@@ -46,9 +46,10 @@ defmodule OpentelemetryPlugTest do
 
     assert List.keymember?(headers, "traceparent", 0)
     assert_receive {:span, span(name: "/hello/:foo", attributes: attrs)}, 5000
+    attrs_map = elem(attrs, 4)
 
     for attr <- @default_attrs do
-      assert List.keymember?(attrs, attr, 0)
+      assert Map.has_key?(attrs_map, attr)
     end
   end
 
@@ -59,28 +60,32 @@ defmodule OpentelemetryPlugTest do
              request(:get, "/hello/world", [{"x-forwarded-for", "1.1.1.1"}])
 
     assert_receive {:span, span(attributes: attrs)}, 5000
+    attrs_map = elem(attrs, 4)
 
-    assert List.keymember?(attrs, :"http.client_ip", 0)
-    assert List.keymember?(attrs, :"http.server_name", 0)
+    assert Map.has_key?(attrs_map, :"http.client_ip")
+    assert Map.has_key?(attrs_map, :"http.server_name")
   end
 
   test "records exceptions" do
     assert {500, _, _} = request(:get, "/hello/crash")
     assert_receive {:span, span(attributes: attrs, status: span_status, events: events)}, 5000
 
-    assert {:"http.status_code", 500} = List.keyfind(attrs, :"http.status_code", 0)
+    assert 500 = Map.get(elem(attrs, 4), :"http.status_code")
     assert status(code: :error, message: _) = span_status
-    assert [event(name: "exception", attributes: evt_attrs)] = events
+    event_extracted = List.first(elem(events, 5))
+    assert event(name: "exception", attributes: evt_attrs) = event_extracted
+
+    evt_attrs_map = elem(evt_attrs, 4)
 
     for key <- ~w(exception.type exception.message exception.stacktrace) do
-      assert List.keymember?(evt_attrs, key, 0)
+      assert Map.has_key?(evt_attrs_map, key)
     end
   end
 
   test "sets span status on non-successful status codes" do
     assert {400, _, _} = request(:get, "/hello/bad-request")
     assert_receive {:span, span(attributes: attrs, status: span_status)}, 5000
-    assert {:"http.status_code", 400} = List.keyfind(attrs, :"http.status_code", 0)
+    assert 400 = Map.get(elem(attrs, 4), :"http.status_code")
     assert status(code: :error, message: _) = span_status
   end
 
